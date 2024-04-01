@@ -1,0 +1,99 @@
+name: Build and Release
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  ARTIFACT_REGISTRY_URL: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO_NAME }}
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@master
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      - name: Configure Docker to use the gcloud command-line tool as a credential helper
+        run: |
+          gcloud --quiet auth configure-docker ${{ env.ARTIFACT_REGISTRY_URL }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ARTIFACT_REGISTRY_URL }}:${{ github.ref }}
+
+      - name: Search for Terraform Cloud workspace
+        run: |
+          response=$(curl -s -H "Authorization: Bearer ${{ secrets.TF_API_TOKEN }}" \
+            -H "Content-Type: application/vnd.api+json" \
+            "https://app.terraform.io/api/v2/organizations/${{ secrets.TF_ORG_NAME }}/workspaces?search[name]=${{ secrets.TF_WORKSPACE_NAME }}")
+
+          workspace_id=$(echo $response | jq -r '.data[0].id')
+
+          if [ "$workspace_id" == "null" ]; then
+            echo "Workspace not found"
+            exit 1
+          else
+            echo "Workspace ID: $workspace_id"
+            echo "TF_WORKSPACE_ID=$workspace_id" >> $GITHUB_ENV
+          fi
+      
+      - name: Trigger run in Terraform Cloud workspace
+        run: |
+          response=$(curl -s -X POST -H "Authorization: Bearer ${{ secrets.TF_API_TOKEN }}" \
+            -H "Content-Type: application/vnd.api+json" \
+            -d '{
+              "data": {
+                "attributes": {
+                  "is-destroy": false,
+                  "message": "'"${{ github.event.head_commit.message }}"'",
+                  "variables": [
+                    { "key": "application_image_uri", "value": "${{ env.ARTIFACT_REGISTRY_URL }}" },
+                    { "key": "application_image_tag", "value": "${{ github.ref }}" }
+                  ]
+                },
+                "type": "runs",
+                "relationships": {
+                  "workspace": {
+                    "data": {
+                      "type": "workspaces",
+                      "id": "'"$TF_WORKSPACE_ID"'"
+                    }
+                  }
+                }
+              }
+            }' \
+            "https://app.terraform.io/api/v2/runs")
+
+          run_id=$(echo $response | jq -r '.data.id')
+
+          if [ "$run_id" == "null" ]; then
+            echo "Failed to trigger run"
+            exit 1
+          else
+            echo "Triggered run with ID: $run_id"
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
