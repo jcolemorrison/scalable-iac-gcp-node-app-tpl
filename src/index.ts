@@ -1,13 +1,13 @@
 import express, { Request, Response } from 'express';
 import { createClient } from 'redis';
 
-const redisHost = process.env.REDIS_HOST || 'localhost';
+const redisHost = process.env.REDIS_HOST || 'localhost:6379';
 
 const app = express();
 
 async function main() {
   const client = await createClient({
-    url: `redis://${redisHost}:6379`
+    url: `redis://${redisHost}`
   })
     .on('error', err => console.log('Redis Client Error', err))
     .connect();
