@@ -5,7 +5,7 @@ on:
       - '*'
 
 env:
-  ARTIFACT_REGISTRY_URL: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO_NAME }}
+  ARTIFACT_REGISTRY_URL: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO_NAME }}/${{ secrets.TF_WORKSPACE_NAME }}
 
 jobs:
   build-and-release:
@@ -17,29 +17,33 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@master
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v0.2.1
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           export_default_credentials: true
 
-      - name: Configure Docker to use the gcloud command-line tool as a credential helper
-        run: |
-          gcloud --quiet auth configure-docker ${{ env.ARTIFACT_REGISTRY_URL }}
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v2
         with:
           context: .
           push: true
-          tags: ${{ env.ARTIFACT_REGISTRY_URL }}:${{ github.ref }}
+          tags: ${{ env.ARTIFACT_REGISTRY_URL }}:${{ github.ref_name }}
 
       - name: Search for Terraform Cloud workspace
         run: |
-          response=$(curl -s -H "Authorization: Bearer ${{ secrets.TF_API_TOKEN }}" \
+          response=$(curl -G -s -H "Authorization: Bearer ${{ secrets.TF_API_TOKEN }}" \
             -H "Content-Type: application/vnd.api+json" \
-            "https://app.terraform.io/api/v2/organizations/${{ secrets.TF_ORG_NAME }}/workspaces?search[name]=${{ secrets.TF_WORKSPACE_NAME }}")
+            --data-urlencode "search[name]=${{ secrets.TF_WORKSPACE_NAME }}" \
+            "https://app.terraform.io/api/v2/organizations/${{ secrets.TF_ORG_NAME }}/workspaces")
 
           workspace_id=$(echo $response | jq -r '.data[0].id')
 
@@ -61,8 +65,8 @@ jobs:
                   "is-destroy": false,
                   "message": "'"${{ github.event.head_commit.message }}"'",
                   "variables": [
-                    { "key": "application_image_uri", "value": "${{ env.ARTIFACT_REGISTRY_URL }}" },
-                    { "key": "application_image_tag", "value": "${{ github.ref }}" }
+                    { "key": "application_image_uri", "value": "\"${{ env.ARTIFACT_REGISTRY_URL }}\"" },
+                    { "key": "application_image_tag", "value": "\"${{ github.ref_name }}\"" }
                   ]
                 },
                 "type": "runs",
