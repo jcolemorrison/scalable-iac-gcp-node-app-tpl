@@ -91,6 +91,7 @@ jobs:
             echo "Triggered run with ID: $run_id"
           fi
 
+      # Actions requires "Workflow Permissions" set to "Read and Write" in Repo Settings > Actions > General for this to work
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1

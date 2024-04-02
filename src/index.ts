@@ -2,19 +2,21 @@ import express, { Request, Response } from 'express';
 import { createClient } from 'redis';
 
 const redisHost = process.env.REDIS_HOST || 'localhost:6379';
+const appPort = process.env.NODE_ENV == "development" ? 3000 : 8080;
 
 const app = express();
 
 async function main() {
   const client = await createClient({
-    url: `redis://${redisHost}`
+    url: `redis://${redisHost}`,
+    disableClientInfo: true
   })
     .on('error', err => console.log('Redis Client Error', err))
     .connect();
 
   app.get('/', async (req: Request, res: Response) => {
     try {
-      const keys = await client.keys('*');
+      const keys = ["roomcount", "c:game_room"];
       const keyValuePairs: { [key: string]: any } = {};
 
       for (const key of keys) {
@@ -48,8 +50,8 @@ async function main() {
     }
   });
 
-  app.listen(8080, () => {
-    console.log('Server is running on port 8080');
+  app.listen(appPort, () => {
+    console.log(`Server is running on port ${appPort}`);
   });
 }
 
